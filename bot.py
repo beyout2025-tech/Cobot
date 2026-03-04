@@ -122,13 +122,12 @@ async def start_cmd(message: types.Message):
         kb.row(InlineKeyboardButton(text="✅ تحقق", callback_data="check_sub"))
         return await message.answer("⚠️ **يجب الاشتراك أولاً لاستخدام البوت:**", reply_markup=kb.as_markup())
 
+    # إرسال رسالة الترحيب
     await message.answer(db["settings"]["start_msg"])
 
-@dp.message(F.text == "start")
-async def admin_panel(message: types.Message):
-    if message.from_user.id in db["admins"]:
+    # --- هنا نضيف ظهور لوحة المطور مباشرة للأدمن ---
+    if u_id in db["admins"]:
         await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
-
 # --- [إصلاح زر الإعدادات] دوال التحكم في الإعدادات ---
 @dp.callback_query(F.data == "manage_settings")
 async def manage_settings_ui(call: CallbackQuery):
@@ -137,6 +136,7 @@ async def manage_settings_ui(call: CallbackQuery):
     estgbal_stat = "✅" if db["settings"]["estgbal"] == "on" else "❌"
     builder.row(InlineKeyboardButton(text=f"التنبيهات: {tanbih_stat}", callback_data="toggle_tanbih"))
     builder.row(InlineKeyboardButton(text=f"الاستقبال: {estgbal_stat}", callback_data="toggle_estgbal"))
+    builder.row(InlineKeyboardButton(text="✏️ رسالة الترحيب", callback_data="edit_start_msg"))
     builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
     
     try:
@@ -144,6 +144,29 @@ async def manage_settings_ui(call: CallbackQuery):
     except TelegramBadRequest:
         # إذا فشلت edit_text، أرسل رسالة جديدة
         await call.message.answer("⚙️ **إعدادات البوت:**", reply_markup=builder.as_markup())
+
+
+@dp.callback_query(F.data == "edit_start_msg")
+async def edit_start_msg_cb(call: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminStates.waiting_for_start_msg)
+    instructions = (
+        "✏️ **أرسل الآن الكليشة الجديدة لرسالة الترحيب**.\n\n"
+        "يمكنك استخدام الهاشتاقات التالية داخل الرسالة:\n"
+        "1. #name_user : اسم الشخص مع معرفه (مثال: @user)\n"
+        "2. #username : اسم المستخدم فقط مع @\n"
+        "3. #name : الاسم الكامل للشخص\n"
+        "4. #id : معرف الشخص\n\n"
+        "يمكنك أيضًا استخدام Markdown لإضافة تنسيقات، أو وضع [] حول أسماء المستخدمين."
+    )
+    await call.message.answer(instructions)
+
+@dp.message(AdminStates.waiting_for_start_msg, F.from_user.id.in_(db["admins"]))
+async def process_new_start_msg(message: types.Message, state: FSMContext):
+    db["settings"]["start_msg"] = message.text
+    save_db(db)
+    await state.clear()
+    await message.answer("✅ تم تحديث رسالة الترحيب بنجاح!", reply_markup=get_main_admin_kb())
+    
 
 @dp.callback_query(F.data == "toggle_tanbih")
 async def toggle_tanbih_cb(call: CallbackQuery):
@@ -437,3 +460,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
