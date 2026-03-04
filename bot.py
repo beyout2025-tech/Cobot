@@ -99,7 +99,6 @@ async def start_cmd(message: types.Message):
         save_db(db)
         is_new = True
         
-        # [تعديل 1] إصلاح رسالة التنبيه وتنسيقها وجعل الأيدي قابل للنسخ
         if db["settings"]["tanbih"] == "on":
             username = f"@{message.from_user.username}" if message.from_user.username else "لا يوجد"
             alert_text = (
@@ -125,11 +124,33 @@ async def start_cmd(message: types.Message):
 
     await message.answer(db["settings"]["start_msg"])
 
-# [تعديل 2] إصلاح ظهور لوحة المطور (تغيير شرط التحقق لضمان الدقة)
 @dp.message(F.text == "م")
 async def admin_panel(message: types.Message):
     if message.from_user.id in db["admins"]:
         await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
+
+# --- [إصلاح زر الإعدادات] دوال التحكم في الإعدادات ---
+@dp.callback_query(F.data == "manage_settings")
+async def manage_settings_ui(call: CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    tanbih_stat = "✅" if db["settings"]["tanbih"] == "on" else "❌"
+    estgbal_stat = "✅" if db["settings"]["estgbal"] == "on" else "❌"
+    builder.row(InlineKeyboardButton(text=f"التنبيهات: {tanbih_stat}", callback_data="toggle_tanbih"))
+    builder.row(InlineKeyboardButton(text=f"الاستقبال: {estgbal_stat}", callback_data="toggle_estgbal"))
+    builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
+    await call.message.edit_text("⚙️ **إعدادات البوت:**", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "toggle_tanbih")
+async def toggle_tanbih_cb(call: CallbackQuery):
+    db["settings"]["tanbih"] = "off" if db["settings"]["tanbih"] == "on" else "on"
+    save_db(db)
+    await manage_settings_ui(call)
+
+@dp.callback_query(F.data == "toggle_estgbal")
+async def toggle_estgbal_cb(call: CallbackQuery):
+    db["settings"]["estgbal"] = "off" if db["settings"]["estgbal"] == "on" else "on"
+    save_db(db)
+    await manage_settings_ui(call)
 
 # --- نظام التواصل الجوهري (The Core) ---
 @dp.message(F.chat.type == "private")
@@ -137,18 +158,19 @@ async def main_communication(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
     
+    # منع التداخل مع الحالات الإدارية (مثل الإذاعة)
     if user_id in db["admins"] and current_state is not None:
         return
+        
     if user_id in db["bans"]: return
 
-    # [تعديل 3] إصلاح رد الإدارة ليرسل إلى المستخدم الفعلي
+    # نظام الرد من قبل الأدمن
     if user_id in db["admins"] and message.reply_to_message:
         mapped = db["msg_map"].get(str(message.reply_to_message.message_id))
         if mapped:
             target_user_id = mapped["user_id"]
             try:
                 await bot.send_chat_action(target_user_id, "typing")
-                # إرسال النسخة للمستخدم
                 await message.copy_to(chat_id=target_user_id)
                 db["stats"]["total_sent"] += 1
                 save_db(db)
@@ -159,6 +181,9 @@ async def main_communication(message: types.Message, state: FSMContext):
                 return await message.reply(f"❌ فشل الإرسال: {str(e)}")
         return
 
+    # إذا كان أدمن يكتب رسالة عادية لا ننشئ تذكرة
+    if user_id in db["admins"]: return
+
     if db["settings"]["estgbal"] == "off":
         return await message.answer("⚠️ الاستقبال معطل حالياً.")
 
@@ -166,15 +191,14 @@ async def main_communication(message: types.Message, state: FSMContext):
     if (p["photo"] == "on" and message.photo) or \
        (p["video"] == "on" and message.video) or \
        (p["forward"] == "on" and message.forward_from) or \
-       (p["link"] == "on" and "t.me" in (message.text or "")):
+       (p["link"] == "on" and (message.text and "t.me" in message.text)):
         return await message.answer("🚫 عذراً، هذا النوع من الرسائل محظور حالياً.")
 
     db["ticket_count"] += 1
     t_id = db["ticket_count"]
     ban_kb = InlineKeyboardBuilder()
-    ban_kb.add(InlineKeyboardButton(text="🚫 حظر", callback_data=f"ban_{user_id}"))
+    ban_kb.add(InlineKeyboardButton(text=f"🚫 حظر {message.from_user.first_name}", callback_data=f"ban_{user_id}"))
     
-    # رسالة الإشعار للمطور (الأيدي قابل للنسخ)
     header = f"📩 **تذكرة جديدة #{t_id}**\n👤: {message.from_user.full_name}\n🆔: `{user_id}`"
     await bot.send_message(SUDO_ID, header, parse_mode="Markdown")
     
@@ -208,9 +232,11 @@ async def prot_cb(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("toggle_"))
 async def toggle_logic(call: CallbackQuery):
     key = call.data.split("_")[1]
-    db["protection"][key] = "on" if db["protection"][key] == "off" else "off"
-    save_db(db)
-    await prot_cb(call)
+    # التأكد من أن المفتاح موجود في الحماية وليس الإعدادات العامة
+    if key in db["protection"]:
+        db["protection"][key] = "on" if db["protection"][key] == "off" else "off"
+        save_db(db)
+        await prot_cb(call)
 
 @dp.callback_query(F.data.startswith("ban_"))
 async def ban_user_cb(call: CallbackQuery):
@@ -243,7 +269,7 @@ async def manage_channels_ui(call: CallbackQuery):
     await call.message.edit_text(f"📢 **إدارة القنوات:**\n\n{ch_list}", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "add_channel")
-async def add_channel_start(call: CallbackQuery, state: FSMContext):
+async def add_channel_start_btn(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_channel_id)
     await call.message.edit_text("ارسل معرف القناة (مثال: @YourChannel):")
 
@@ -302,7 +328,7 @@ async def manage_admins_ui(call: CallbackQuery):
     await call.message.edit_text(admin_list, reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "add_new_admin")
-async def add_admin_start(call: CallbackQuery, state: FSMContext):
+async def add_admin_start_btn(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_new_admin_id)
     await call.message.edit_text("ارسل ايدي الأدمن الجديد (رقم فقط):")
 
@@ -333,25 +359,27 @@ async def import_db_start_cb(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_db_import)
     await call.message.edit_text("📤 **ارسل ملف (JSON) لاستيراد القاعدة:**")
 
-@dp.message(AdminStates.waiting_for_db_import, F.document, F.from_user.id == SUDO_ID)
+@dp.message(AdminStates.waiting_for_db_import, F.document)
 async def import_db_process(message: types.Message, state: FSMContext):
-    if not message.document.file_name.endswith('.json'):
-        return await message.answer("❌ ارسل ملف .json فقط.")
-    file = await bot.get_file(message.document.file_id)
-    content = await bot.download_file(file.file_path)
+    if message.from_user.id != SUDO_ID: return
     try:
-        new_db = json.load(content)
-        if SUDO_ID not in new_db["admins"]: new_db["admins"].append(SUDO_ID)
-        global db
-        db = new_db
-        save_db(db)
-        await message.answer("✅ تم الاستيراد بنجاح!")
-    except:
-        await message.answer("❌ فشل الاستيراد.")
-    await state.clear()
+        file = await bot.get_file(message.document.file_id)
+        content = await bot.download_file(file.file_path)
+        new_data = json.load(content)
+        if "members" in new_data and "admins" in new_data:
+            db.update(new_data)
+            if SUDO_ID not in db["admins"]: db["admins"].append(SUDO_ID)
+            save_db(db)
+            await message.answer("✅ تم تحديث قاعدة البيانات بنجاح.")
+        else:
+            await message.answer("❌ الملف ليس قاعدة بيانات صحيحة.")
+    except Exception as e:
+        await message.answer(f"❌ حدث خطأ أثناء الاستيراد: {str(e)}")
+    finally:
+        await state.clear()
 
 @dp.message(AdminStates.waiting_for_broadcast, F.from_user.id.in_(db["admins"]))
-async def extension_broadcast_processor(message: types.Message, state: FSMContext):
+async def broadcast_processor(message: types.Message, state: FSMContext):
     await state.clear()
     success, failed = 0, 0
     msg = await message.answer("📡 جاري الإرسال...")
@@ -361,14 +389,15 @@ async def extension_broadcast_processor(message: types.Message, state: FSMContex
             success += 1
         except: failed += 1
         await asyncio.sleep(0.05)
-    await msg.edit_text(f"📢 اكتملت!\n✅ نجاح: `{success}`\n❌ فشل: `{failed}`", reply_markup=get_main_admin_kb())
+    await msg.edit_text(f"📢 اكتملت الإذاعة!\n✅ نجاح: `{success}`\n❌ فشل: `{failed}`", reply_markup=get_main_admin_kb())
 
 async def auto_backup_task():
     while True:
-        await asyncio.sleep(43200)
+        await asyncio.sleep(43200) # كل 12 ساعة
         try:
-            doc = types.FSInputFile(DB_PATH)
-            await bot.send_document(SUDO_ID, doc, caption="📦 نسخة احتياطية تلقائية")
+            if os.path.exists(DB_PATH):
+                doc = types.FSInputFile(DB_PATH)
+                await bot.send_document(SUDO_ID, doc, caption="📦 نسخة احتياطية تلقائية للقاعدة")
         except: pass
 
 async def main():
