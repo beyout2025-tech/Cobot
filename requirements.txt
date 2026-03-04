@@ -1,0 +1,14 @@
+# ==========================
+# نسخة مستقرة للبوت على Railway
+# لغة بايثون: 3.11 (أحدث نسخة مستقرة متوافقة مع المكتبات)
+# ==========================
+
+python-telegram-bot==20.3
+python-dotenv
+flask
+httpx==0.24.1
+httpcore==0.17.1
+certifi==2023.7.22
+charset-normalizer==3.3.1
+idna==3.4
+typing-extensions==4.7.1
