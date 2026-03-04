@@ -403,15 +403,19 @@ async def import_db_start_cb(call: CallbackQuery, state: FSMContext):
 async def import_db_process(message: types.Message, state: FSMContext):
     if message.from_user.id != SUDO_ID: 
         return
+    await message.answer("📥 جاري استيراد النسخة الاحتياطية...")
     try:
         import io
-        file = await bot.get_file(message.document.file_id)
-        content = await bot.download_file(file.file_path)
-        # تحويل المحتوى لملف قابل للقراءة
-        file_bytes = io.BytesIO(content.read())
+        file_info = await bot.get_file(message.document.file_id)
+        content = await bot.download_file(file_info.file_path)
+        file_bytes = io.BytesIO()
+        content.write(file_bytes)
+        file_bytes.seek(0)  # إعادة مؤشر القراءة للبداية
         new_data = json.load(file_bytes)
         
+        # تحقق سريع من البيانات
         if "members" in new_data and "admins" in new_data:
+            db.clear()
             db.update(new_data)
             if SUDO_ID not in db["admins"]: db["admins"].append(SUDO_ID)
             save_db(db)
@@ -422,6 +426,7 @@ async def import_db_process(message: types.Message, state: FSMContext):
         await message.answer(f"❌ حدث خطأ أثناء الاستيراد: {str(e)}")
     finally:
         await state.clear()
+        
 
 @dp.message(AdminStates.waiting_for_broadcast, F.from_user.id.in_(db["admins"]))
 async def broadcast_processor(message: types.Message, state: FSMContext):
