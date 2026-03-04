@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -93,11 +93,28 @@ def get_main_admin_kb():
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     u_id = message.from_user.id
+    is_new = False
     if str(u_id) not in db["members"]:
         db["members"].append(str(u_id))
         save_db(db)
+        is_new = True
+        
+        # [تعديل 1] إصلاح رسالة التنبيه وتنسيقها وجعل الأيدي قابل للنسخ
         if db["settings"]["tanbih"] == "on":
-            await bot.send_message(SUDO_ID, f"🆕 **عضو جديد:**\nالاسم: {message.from_user.full_name}\nID: `{u_id}`")
+            username = f"@{message.from_user.username}" if message.from_user.username else "لا يوجد"
+            alert_text = (
+                "تم دخول شخص جديد إلى البوت الخاص بك 👾\n"
+                "            -----------------------\n"
+                "• معلومات العضو الجديد .\n\n"
+                f"• الاسم : {message.from_user.full_name}\n"
+                f"• معرف : {username}\n"
+                f"• الايدي : `{u_id}`\n"
+                "            -----------------------\n"
+                f"• عدد الأعضاء الكلي : {len(db['members'])}"
+            )
+            try:
+                await bot.send_message(SUDO_ID, alert_text, parse_mode="Markdown")
+            except: pass
 
     if not await is_subscribed(u_id):
         kb = InlineKeyboardBuilder()
@@ -108,30 +125,38 @@ async def start_cmd(message: types.Message):
 
     await message.answer(db["settings"]["start_msg"])
 
-@dp.message(F.text == "م", F.from_user.id.in_(db["admins"]))
+# [تعديل 2] إصلاح ظهور لوحة المطور (تغيير شرط التحقق لضمان الدقة)
+@dp.message(F.text == "م")
 async def admin_panel(message: types.Message):
-    await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
+    if message.from_user.id in db["admins"]:
+        await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
 
 # --- نظام التواصل الجوهري (The Core) ---
 @dp.message(F.chat.type == "private")
 async def main_communication(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
+    
     if user_id in db["admins"] and current_state is not None:
         return
     if user_id in db["bans"]: return
 
+    # [تعديل 3] إصلاح رد الإدارة ليرسل إلى المستخدم الفعلي
     if user_id in db["admins"] and message.reply_to_message:
         mapped = db["msg_map"].get(str(message.reply_to_message.message_id))
         if mapped:
+            target_user_id = mapped["user_id"]
             try:
-                await bot.send_chat_action(mapped["user_id"], "typing")
-                await message.copy_to(chat_id=mapped["user_id"])
+                await bot.send_chat_action(target_user_id, "typing")
+                # إرسال النسخة للمستخدم
+                await message.copy_to(chat_id=target_user_id)
                 db["stats"]["total_sent"] += 1
                 save_db(db)
-                return await message.reply(f"🎯 **تم الرد على التذكرة #{mapped['ticket']}**")
+                return await message.reply(f"🎯 **تم الرد على التذكرة #{mapped['ticket']} وإرسالها للمستخدم.**")
             except TelegramForbiddenError:
-                return await message.reply("❌ حظرك العضو.")
+                return await message.reply("❌ لا يمكن الرد، المستخدم قام بحظر البوت.")
+            except Exception as e:
+                return await message.reply(f"❌ فشل الإرسال: {str(e)}")
         return
 
     if db["settings"]["estgbal"] == "off":
@@ -148,8 +173,10 @@ async def main_communication(message: types.Message, state: FSMContext):
     t_id = db["ticket_count"]
     ban_kb = InlineKeyboardBuilder()
     ban_kb.add(InlineKeyboardButton(text="🚫 حظر", callback_data=f"ban_{user_id}"))
+    
+    # رسالة الإشعار للمطور (الأيدي قابل للنسخ)
     header = f"📩 **تذكرة جديدة #{t_id}**\n👤: {message.from_user.full_name}\n🆔: `{user_id}`"
-    await bot.send_message(SUDO_ID, header)
+    await bot.send_message(SUDO_ID, header, parse_mode="Markdown")
     
     try:
         fwd = await message.forward(chat_id=SUDO_ID)
@@ -161,16 +188,16 @@ async def main_communication(message: types.Message, state: FSMContext):
     except Exception as e:
         logging.error(e)
 
-# --- أنظمة التحكم (Callbacks & Operations) - [تم تصحيح الأخطاء هنا] ---
+# --- أنظمة التحكم (Callbacks) ---
 
 @dp.callback_query(F.data == "view_stats")
-async def stats_cb(call: types.CallbackQuery):
+async def stats_cb(call: CallbackQuery):
     s = db["stats"]
-    text = f"📊 **إحصائيات النظام:**\n\n👥 المشتركين: {len(db['members'])}\n📩 رسائل مستلمة: {s['total_received']}\n📤 ردود مرسلة: {s['total_sent']}\n🚫 المحظورين: {len(db['bans'])}"
+    text = f"📊 **إحصائيات النظام:**\n\n👥 المشتركين: {len(db['members'])}\n📩 مستلمة: {s['total_received']}\n📤 مرسلة: {s['total_sent']}\n🚫 محظورين: {len(db['bans'])}"
     await call.message.edit_text(text, reply_markup=get_main_admin_kb())
 
 @dp.callback_query(F.data == "manage_protection")
-async def prot_cb(call: types.CallbackQuery):
+async def prot_cb(call: CallbackQuery):
     builder = InlineKeyboardBuilder()
     for k, v in db["protection"].items():
         status = "✅" if v == "on" else "❌"
@@ -179,78 +206,63 @@ async def prot_cb(call: types.CallbackQuery):
     await call.message.edit_text("🛡️ **إعدادات الحماية:**", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("toggle_"))
-async def toggle_logic(call: types.CallbackQuery):
+async def toggle_logic(call: CallbackQuery):
     key = call.data.split("_")[1]
     db["protection"][key] = "on" if db["protection"][key] == "off" else "off"
     save_db(db)
     await prot_cb(call)
 
 @dp.callback_query(F.data.startswith("ban_"))
-async def ban_user_cb(call: types.CallbackQuery):
+async def ban_user_cb(call: CallbackQuery):
     u_id = int(call.data.split("_")[1])
     if u_id not in db["bans"]:
         db["bans"].append(u_id)
         save_db(db)
         await call.answer("✅ تم الحظر", show_alert=True)
-        await call.message.edit_text(call.message.text + "\n\n🚫 **هذا المستخدم محظور حالياً.**")
+        await call.message.edit_text(call.message.text + "\n\n🚫 **هذا المستخدم محظور.**")
 
 @dp.callback_query(F.data == "start_broadcast")
-async def broadcast_ui(call: types.CallbackQuery, state: FSMContext):
+async def broadcast_ui(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_broadcast)
     builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="❌ إلغاء الإذاعة", callback_data="back_admin"))
-    await call.message.edit_text("📣 **أرسل الآن الرسالة التي تريد إذاعتها:**", reply_markup=builder.as_markup())
+    builder.add(InlineKeyboardButton(text="❌ إلغاء", callback_data="back_admin"))
+    await call.message.edit_text("📣 **أرسل الآن رسالة الإذاعة:**", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "back_admin")
-async def back_admin(call: types.CallbackQuery, state: FSMContext):
+async def back_admin(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
 
-# --- نظام الإذاعة المتطور ---
-@dp.message(AdminStates.waiting_for_broadcast, F.from_user.id.in_(db["admins"]))
-async def extension_broadcast_processor(message: types.Message, state: FSMContext):
-    await state.clear()
-    users, success, failed = db["members"], 0, 0
-    progress_msg = await message.answer(f"📡 **جاري بدء الإذاعة...**")
-    for user_id in users:
-        try:
-            await message.copy_to(chat_id=int(user_id))
-            success += 1
-        except: failed += 1
-        await asyncio.sleep(0.05)
-    await progress_msg.edit_text(f"📢 **اكتملت الإذاعة!**\n✅ نجاح: `{success}`\n❌ فشل: `{failed}`", reply_markup=get_main_admin_kb())
-
-# --- إدارة القنوات ---
 @dp.callback_query(F.data == "manage_channels")
-async def manage_channels_ui(call: types.CallbackQuery):
+async def manage_channels_ui(call: CallbackQuery):
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="➕ إضافة قناة", callback_data="add_channel"),
-                InlineKeyboardButton(text="🗑️ مسح القنوات", callback_data="clear_channels"))
+    builder.row(InlineKeyboardButton(text="➕ إضافة قناة", callback_data="add_channel"))
+    builder.row(InlineKeyboardButton(text="🗑️ مسح القنوات", callback_data="clear_channels"))
     builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
     ch_list = "\n".join([f"🔗 {c['id']}" for c in db["channels"]]) if db["channels"] else "لا توجد قنوات."
     await call.message.edit_text(f"📢 **إدارة القنوات:**\n\n{ch_list}", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "add_channel")
-async def add_channel_start(call: types.CallbackQuery, state: FSMContext):
+async def add_channel_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_channel_id)
     await call.message.edit_text("ارسل معرف القناة (مثال: @YourChannel):")
 
 @dp.message(AdminStates.waiting_for_channel_id, F.from_user.id.in_(db["admins"]))
-async def add_channel_id(message: types.Message, state: FSMContext):
-    await state.update_data(ch_id=message.text)
+async def channel_id_rec(message: types.Message, state: FSMContext):
+    await state.update_data(chid=message.text)
     await state.set_state(AdminStates.waiting_for_channel_link)
-    await message.answer("ارسل رابط القناة (https://t.me/...):")
+    await message.answer("ارسل رابط القناة:")
 
 @dp.message(AdminStates.waiting_for_channel_link, F.from_user.id.in_(db["admins"]))
-async def add_channel_final(message: types.Message, state: FSMContext):
+async def channel_link_rec(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    db["channels"].append({"id": data['ch_id'], "link": message.text})
+    db["channels"].append({"id": data["chid"], "link": message.text})
     save_db(db)
     await state.clear()
-    await message.answer("✅ تم إضافة القناة بنجاح!", reply_markup=get_main_admin_kb())
+    await message.answer("✅ تم الإضافة", reply_markup=get_main_admin_kb())
 
 @dp.callback_query(F.data == "view_bans")
-async def view_bans_ui(call: types.CallbackQuery):
+async def view_bans_ui(call: CallbackQuery):
     builder = InlineKeyboardBuilder()
     if db["bans"]:
         for user_id in db["bans"]:
@@ -259,16 +271,16 @@ async def view_bans_ui(call: types.CallbackQuery):
     await call.message.edit_text(f"🚫 **قائمة المحظورين ({len(db['bans'])}):**", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("unban_"))
-async def unban_user_cb(call: types.CallbackQuery):
+async def unban_user_cb(call: CallbackQuery):
     u_id = int(call.data.split("_")[1])
     if u_id in db["bans"]:
         db["bans"].remove(u_id)
         save_db(db)
-        await call.answer("✅ تم فك الحظر.", show_alert=True)
+        await call.answer("✅ تم فك الحظر", show_alert=True)
         await view_bans_ui(call)
 
 @dp.callback_query(F.data == "backup_db")
-async def backup_db_cb(call: types.CallbackQuery):
+async def backup_db_cb(call: CallbackQuery):
     try:
         doc = types.FSInputFile(DB_PATH)
         await bot.send_document(call.from_user.id, doc, caption=f"💾 نسخة احتياطية للقاعدة\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -276,16 +288,8 @@ async def backup_db_cb(call: types.CallbackQuery):
     except Exception as e:
         await call.answer(f"❌ خطأ: {str(e)}")
 
-@dp.callback_query(F.data == "check_sub")
-async def check_sub_callback(call: types.CallbackQuery):
-    if await is_subscribed(call.from_user.id):
-        await call.message.edit_text("✅ تم التحقق، يمكنك استخدام البوت.")
-    else:
-        await call.answer("❌ لم تشترك في القنوات بعد!", show_alert=True)
-
-# --- إدارة الأدمن واستيراد القاعدة ---
 @dp.callback_query(F.data == "manage_admins")
-async def manage_admins_ui(call: types.CallbackQuery):
+async def manage_admins_ui(call: CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="➕ إضافة أدمن", callback_data="add_new_admin"))
     admin_list = "👥 **قائمة الأدمن الحالية:**\n\n"
@@ -298,79 +302,79 @@ async def manage_admins_ui(call: types.CallbackQuery):
     await call.message.edit_text(admin_list, reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "add_new_admin")
-async def add_admin_start(call: types.CallbackQuery, state: FSMContext):
+async def add_admin_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_new_admin_id)
     await call.message.edit_text("ارسل ايدي الأدمن الجديد (رقم فقط):")
 
 @dp.message(AdminStates.waiting_for_new_admin_id, F.from_user.id == SUDO_ID)
-async def add_admin_id(message: types.Message, state: FSMContext):
+async def process_new_admin(message: types.Message, state: FSMContext):
     if message.text.isdigit():
-        new_adm = int(message.text)
-        if new_adm not in db["admins"]:
-            db["admins"].append(new_adm)
+        new_id = int(message.text)
+        if new_id not in db["admins"]:
+            db["admins"].append(new_id)
             save_db(db)
-            await message.answer(f"✅ تم إضافة `{new_adm}` كأدمن.")
+            await message.answer(f"✅ تم إضافة `{new_id}` كأدمن.")
         else:
-            await message.answer("⚠️ الأيدي موجود بالفعل.")
-    else:
-        await message.answer("❌ ارسل رقماً فقط.")
+            await message.answer("⚠️ الأدمن موجود بالفعل.")
     await state.clear()
     await admin_panel(message)
 
 @dp.callback_query(F.data.startswith("rem_admin_"))
-async def remove_admin_cb(call: types.CallbackQuery):
+async def remove_admin_cb(call: CallbackQuery):
     adm_id = int(call.data.split("_")[2])
     if adm_id != SUDO_ID:
         db["admins"].remove(adm_id)
         save_db(db)
-        await call.answer(f"✅ تم حذف الأدمن {adm_id}", show_alert=True)
+        await call.answer(f"✅ تم الحذف", show_alert=True)
         await manage_admins_ui(call)
-    else:
-        await call.answer("❌ لا يمكن حذف المطور الأساسي!", show_alert=True)
 
 @dp.callback_query(F.data == "import_db_start")
-async def import_db_start_cb(call: types.CallbackQuery, state: FSMContext):
+async def import_db_start_cb(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_db_import)
     await call.message.edit_text("📤 **ارسل ملف (JSON) لاستيراد القاعدة:**")
 
 @dp.message(AdminStates.waiting_for_db_import, F.document, F.from_user.id == SUDO_ID)
 async def import_db_process(message: types.Message, state: FSMContext):
     if not message.document.file_name.endswith('.json'):
-        return await message.answer("❌ يرجى إرسال ملف .json فقط.")
-    file_id = message.document.file_id
-    file = await bot.get_file(file_id)
+        return await message.answer("❌ ارسل ملف .json فقط.")
+    file = await bot.get_file(message.document.file_id)
     content = await bot.download_file(file.file_path)
     try:
         new_db = json.load(content)
-        required_keys = ["members", "admins", "bans", "channels", "settings", "protection", "msg_map", "ticket_count", "stats"]
-        if all(key in new_db for key in required_keys):
-            if SUDO_ID not in new_db["admins"]: new_db["admins"].append(SUDO_ID)
-            global db
-            db = new_db
-            save_db(db)
-            await message.answer("✅ تم استيراد القاعدة بنجاح!")
-        else:
-            await message.answer("❌ هيكل الملف غير صحيح.")
-    except Exception as e:
-        await message.answer(f"❌ خطأ: {str(e)}")
+        if SUDO_ID not in new_db["admins"]: new_db["admins"].append(SUDO_ID)
+        global db
+        db = new_db
+        save_db(db)
+        await message.answer("✅ تم الاستيراد بنجاح!")
+    except:
+        await message.answer("❌ فشل الاستيراد.")
     await state.clear()
-    await admin_panel(message)
 
-# --- التشغيل ---
-async def main():
-    print(f"🚀 [System Online] - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    asyncio.create_task(auto_backup_task())
-    await dp.start_polling(bot)
+@dp.message(AdminStates.waiting_for_broadcast, F.from_user.id.in_(db["admins"]))
+async def extension_broadcast_processor(message: types.Message, state: FSMContext):
+    await state.clear()
+    success, failed = 0, 0
+    msg = await message.answer("📡 جاري الإرسال...")
+    for user_id in db["members"]:
+        try:
+            await message.copy_to(chat_id=int(user_id))
+            success += 1
+        except: failed += 1
+        await asyncio.sleep(0.05)
+    await msg.edit_text(f"📢 اكتملت!\n✅ نجاح: `{success}`\n❌ فشل: `{failed}`", reply_markup=get_main_admin_kb())
 
 async def auto_backup_task():
     while True:
-        await asyncio.sleep(43200) # 12 ساعة
+        await asyncio.sleep(43200)
         try:
             doc = types.FSInputFile(DB_PATH)
             await bot.send_document(SUDO_ID, doc, caption="📦 نسخة احتياطية تلقائية")
         except: pass
 
+async def main():
+    print(f"🚀 [System Online] - {datetime.now()}")
+    asyncio.create_task(auto_backup_task())
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit): pass
+    asyncio.run(main())
