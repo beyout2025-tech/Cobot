@@ -14,7 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- إعدادات البوت والبيئة ---
 TOKEN = os.getenv("BOT_TOKEN")
-SUDO_ID = 873158772  # معرف المطور الأساسي
+SUDO_ID = 7607952642  # معرف المطور الأساسي
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
