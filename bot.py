@@ -124,7 +124,7 @@ async def start_cmd(message: types.Message):
 
     await message.answer(db["settings"]["start_msg"])
 
-@dp.message(F.text == "م")
+@dp.message(F.text == "start")
 async def admin_panel(message: types.Message):
     if message.from_user.id in db["admins"]:
         await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
@@ -138,7 +138,12 @@ async def manage_settings_ui(call: CallbackQuery):
     builder.row(InlineKeyboardButton(text=f"التنبيهات: {tanbih_stat}", callback_data="toggle_tanbih"))
     builder.row(InlineKeyboardButton(text=f"الاستقبال: {estgbal_stat}", callback_data="toggle_estgbal"))
     builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
-    await call.message.edit_text("⚙️ **إعدادات البوت:**", reply_markup=builder.as_markup())
+    
+    try:
+        await call.message.edit_text("⚙️ **إعدادات البوت:**", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    except TelegramBadRequest:
+        # إذا فشلت edit_text، أرسل رسالة جديدة
+        await call.message.answer("⚙️ **إعدادات البوت:**", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "toggle_tanbih")
 async def toggle_tanbih_cb(call: CallbackQuery):
@@ -257,7 +262,7 @@ async def broadcast_ui(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "back_admin")
 async def back_admin(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await call.message.edit_text("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
+    await call.message.edit_text("👮 **لوحة تحكم الأدمن الشاملة:**", reply_markup=get_main_admin_kb())
 
 @dp.callback_query(F.data == "manage_channels")
 async def manage_channels_ui(call: CallbackQuery):
@@ -273,11 +278,18 @@ async def add_channel_start_btn(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_channel_id)
     await call.message.edit_text("ارسل معرف القناة (مثال: @YourChannel):")
 
-@dp.message(AdminStates.waiting_for_channel_id, F.from_user.id.in_(db["admins"]))
-async def channel_id_rec(message: types.Message, state: FSMContext):
-    await state.update_data(chid=message.text)
-    await state.set_state(AdminStates.waiting_for_channel_link)
-    await message.answer("ارسل رابط القناة:")
+@dp.message(AdminStates.waiting_for_channel_link, F.from_user.id.in_(db["admins"]))
+async def channel_link_rec(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    try:
+        # التحقق من صحة القناة قبل الإضافة
+        await bot.get_chat(data["chid"])
+        db["channels"].append({"id": data["chid"], "link": message.text})
+        save_db(db)
+        await state.clear()
+        await message.answer("✅ تم الإضافة", reply_markup=get_main_admin_kb())
+    except Exception as e:
+        await message.answer(f"❌ معرف القناة غير صالح أو لا يمكن الوصول إليه: {str(e)}")
 
 @dp.message(AdminStates.waiting_for_channel_link, F.from_user.id.in_(db["admins"]))
 async def channel_link_rec(message: types.Message, state: FSMContext):
@@ -343,7 +355,8 @@ async def process_new_admin(message: types.Message, state: FSMContext):
         else:
             await message.answer("⚠️ الأدمن موجود بالفعل.")
     await state.clear()
-    await admin_panel(message)
+    # إرسال لوحة التحكم مباشرة لتجنب تعليق البوت
+    await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
 
 @dp.callback_query(F.data.startswith("rem_admin_"))
 async def remove_admin_cb(call: CallbackQuery):
@@ -351,8 +364,12 @@ async def remove_admin_cb(call: CallbackQuery):
     if adm_id != SUDO_ID:
         db["admins"].remove(adm_id)
         save_db(db)
-        await call.answer(f"✅ تم الحذف", show_alert=True)
-        await manage_admins_ui(call)
+        await call.answer("✅ تم الحذف", show_alert=True)
+        try:
+            # استخدم edit_message_text ضمن try لمنع أي خطأ يوقف البوت
+            await manage_admins_ui(call)
+        except Exception as e:
+            await call.message.answer("👥 قائمة الأدمن تم تحديثها.", reply_markup=get_main_admin_kb())
 
 @dp.callback_query(F.data == "import_db_start")
 async def import_db_start_cb(call: CallbackQuery, state: FSMContext):
@@ -361,11 +378,16 @@ async def import_db_start_cb(call: CallbackQuery, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_db_import, F.document)
 async def import_db_process(message: types.Message, state: FSMContext):
-    if message.from_user.id != SUDO_ID: return
+    if message.from_user.id != SUDO_ID: 
+        return
     try:
+        import io
         file = await bot.get_file(message.document.file_id)
         content = await bot.download_file(file.file_path)
-        new_data = json.load(content)
+        # تحويل المحتوى لملف قابل للقراءة
+        file_bytes = io.BytesIO(content.read())
+        new_data = json.load(file_bytes)
+        
         if "members" in new_data and "admins" in new_data:
             db.update(new_data)
             if SUDO_ID not in db["admins"]: db["admins"].append(SUDO_ID)
@@ -383,13 +405,21 @@ async def broadcast_processor(message: types.Message, state: FSMContext):
     await state.clear()
     success, failed = 0, 0
     msg = await message.answer("📡 جاري الإرسال...")
+    
     for user_id in db["members"]:
         try:
-            await message.copy_to(chat_id=int(user_id))
+            await bot.copy_message(chat_id=int(user_id), from_chat_id=message.chat.id, message_id=message.message_id)
             success += 1
-        except: failed += 1
-        await asyncio.sleep(0.05)
-    await msg.edit_text(f"📢 اكتملت الإذاعة!\n✅ نجاح: `{success}`\n❌ فشل: `{failed}`", reply_markup=get_main_admin_kb())
+        except TelegramForbiddenError:
+            failed += 1  # المستخدم حظر البوت
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.1)  # تأخير لتجنب تجاوز حدود Telegram
+
+    await msg.edit_text(
+        f"📢 اكتملت الإذاعة!\n✅ نجاح: `{success}`\n❌ فشل: `{failed}`", 
+        reply_markup=get_main_admin_kb()
+    )
 
 async def auto_backup_task():
     while True:
