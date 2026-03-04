@@ -176,8 +176,8 @@ async def main_communication(message: types.Message, state: FSMContext):
 
 # --- أنظمة التحكم (Callbacks & Operations) ---
 
-@dp.callback_query(F.data == "view_stats")
-async def stats_cb(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "view_stats")
+async def stats_cb(call: types.CallbackQuery):
     s = db["stats"]
     text = f"📊 **إحصائيات النظام:**\n\n" \
            f"👥 المشتركين: {len(db['members'])}\n" \
@@ -186,8 +186,8 @@ async def stats_cb(call: types.Callback_query):
            f"🚫 المحظورين: {len(db['bans'])}"
     await call.message.edit_text(text, reply_markup=get_main_admin_kb())
 
-@dp.callback_query(F.data == "manage_protection")
-async def prot_cb(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "manage_protection")
+async def prot_cb(call: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     for k, v in db["protection"].items():
         status = "✅" if v == "on" else "❌"
@@ -195,15 +195,15 @@ async def prot_cb(call: types.Callback_query):
     builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
     await call.message.edit_text("🛡️ **إعدادات الحماية:**", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("toggle_"))
-async def toggle_logic(call: types.Callback_query):
+@dp.CallbackQuery(F.data.startswith("toggle_"))
+async def toggle_logic(call: types.CallbackQuery):
     key = call.data.split("_")[1]
     db["protection"][key] = "on" if db["protection"][key] == "off" else "off"
     save_db(db)
     await prot_cb(call)
 
-@dp.callback_query(F.data.startswith("ban_"))
-async def ban_user_cb(call: types.Callback_query):
+@dp.CallbackQuery(F.data.startswith("ban_"))
+async def ban_user_cb(call: types.CallbackQuery):
     u_id = int(call.data.split("_")[1])
     if u_id not in db["bans"]:
         db["bans"].append(u_id)
@@ -211,15 +211,15 @@ async def ban_user_cb(call: types.Callback_query):
         await call.answer("✅ تم الحظر", show_alert=True)
         await call.message.edit_text(call.message.text + "\n\n🚫 **هذا المستخدم محظور حالياً.**")
 
-@dp.callback_query(F.data == "start_broadcast")
-async def broadcast_ui(call: types.Callback_query, state: FSMContext):
+@dp.CallbackQuery(F.data == "start_broadcast")
+async def broadcast_ui(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_broadcast)
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="❌ إلغاء الإذاعة", callback_data="back_admin"))
     await call.message.edit_text("📣 **أرسل الآن الرسالة التي تريد إذاعتها (نص، صورة، فيديو، إلخ):**", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data == "back_admin")
-async def back_admin(call: types.Callback_query, state: FSMContext):
+@dp.CallbackQuery(F.data == "back_admin")
+async def back_admin(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
 
@@ -256,8 +256,8 @@ async def extension_broadcast_processor(message: types.Message, state: FSMContex
 
 # --- [Extension] إدارة القنوات وفك الحظر والنسخ الاحتياطي ---
 
-@dp.callback_query(F.data == "manage_channels")
-async def manage_channels_ui(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "manage_channels")
+async def manage_channels_ui(call: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="➕ إضافة قناة", callback_data="add_channel"))
     builder.row(InlineKeyboardButton(text="🗑️ مسح جميع القنوات", callback_data="clear_channels"))
@@ -266,8 +266,8 @@ async def manage_channels_ui(call: types.Callback_query):
     ch_list = "\n".join([f"🔗 {c['id']}" for c in db["channels"]]) if db["channels"] else "لا توجد قنوات."
     await call.message.edit_text(f"📢 **إدارة القنوات الحالية:**\n\n{ch_list}", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data == "add_channel")
-async def add_channel_start(call: types.Callback_query, state: FSMContext):
+@dp.CallbackQuery(F.data == "add_channel")
+async def add_channel_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_channel_id)
     await call.message.edit_text("ارسل معرف القناة (مثال: @YourChannel):")
 
@@ -285,8 +285,8 @@ async def add_channel_final(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ تم إضافة القناة بنجاح!", reply_markup=get_main_admin_kb())
 
-@dp.callback_query(F.data == "view_bans")
-async def view_bans_ui(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "view_bans")
+async def view_bans_ui(call: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     if db["bans"]:
         for user_id in db["bans"]:
@@ -294,8 +294,8 @@ async def view_bans_ui(call: types.Callback_query):
     builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
     await call.message.edit_text(f"🚫 **قائمة المحظورين ({len(db['bans'])}):**", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("unban_"))
-async def unban_user_cb(call: types.Callback_query):
+@dp.CallbackQuery(F.data.startswith("unban_"))
+async def unban_user_cb(call: types.CallbackQuery):
     u_id = int(call.data.split("_")[1])
     if u_id in db["bans"]:
         db["bans"].remove(u_id)
@@ -303,8 +303,8 @@ async def unban_user_cb(call: types.Callback_query):
         await call.answer("✅ تم فك الحظر بنجاح.", show_alert=True)
         await view_bans_ui(call)
 
-@dp.callback_query(F.data == "backup_db")
-async def backup_db_cb(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "backup_db")
+async def backup_db_cb(call: types.CallbackQuery):
     try:
         doc = types.FSInputFile(DB_PATH)
         await bot.send_document(call.from_user.id, doc, caption=f"💾 نسخة احتياطية للقاعدة\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -312,8 +312,8 @@ async def backup_db_cb(call: types.Callback_query):
     except Exception as e:
         await call.answer(f"❌ خطأ: {str(e)}")
 
-@dp.callback_query(F.data == "check_sub")
-async def check_sub_callback(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "check_sub")
+async def check_sub_callback(call: types.CallbackQuery):
     if await is_subscribed(call.from_user.id):
         await call.message.edit_text("✅ تم التحقق، يمكنك الآن استخدام البوت.")
     else:
@@ -321,8 +321,8 @@ async def check_sub_callback(call: types.Callback_query):
 
 # --- [Extension Layer] نظام إدارة الأدمن واستيراد القاعدة ---
 
-@dp.callback_query(F.data == "manage_admins")
-async def manage_admins_ui(call: types.Callback_query):
+@dp.CallbackQuery(F.data == "manage_admins")
+async def manage_admins_ui(call: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="➕ إضافة أدمن", callback_data="add_new_admin"))
     
@@ -336,8 +336,8 @@ async def manage_admins_ui(call: types.Callback_query):
     builder.row(InlineKeyboardButton(text="↩️ رجوع", callback_data="back_admin"))
     await call.message.edit_text(admin_list, reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data == "add_new_admin")
-async def add_admin_start(call: types.Callback_query, state: FSMContext):
+@dp.CallbackQuery(F.data == "add_new_admin")
+async def add_admin_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_new_admin_id)
     await call.message.edit_text("ارسل ايدي الأدمن الجديد (رقم فقط):")
 
@@ -356,8 +356,8 @@ async def add_admin_id(message: types.Message, state: FSMContext):
     await state.clear()
     await admin_panel(message)
 
-@dp.callback_query(F.data.startswith("rem_admin_"))
-async def remove_admin_cb(call: types.Callback_query):
+@dp.CallbackQuery(F.data.startswith("rem_admin_"))
+async def remove_admin_cb(call: types.CallbackQuery):
     adm_id = int(call.data.split("_")[2])
     if adm_id != SUDO_ID:
         db["admins"].remove(adm_id)
@@ -367,8 +367,8 @@ async def remove_admin_cb(call: types.Callback_query):
     else:
         await call.answer("❌ لا يمكن حذف المطور الأساسي!", show_alert=True)
 
-@dp.callback_query(F.data == "import_db_start")
-async def import_db_start_cb(call: types.Callback_query, state: FSMContext):
+@dp.CallbackQuery(F.data == "import_db_start")
+async def import_db_start_cb(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_db_import)
     await call.message.edit_text("📤 **يرجى إرسال ملف (JSON) لاستيراد قاعدة البيانات:**\n⚠️ تنبيه: سيتم استبدال القاعدة الحالية بالكامل!")
 
