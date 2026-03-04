@@ -93,13 +93,11 @@ def get_main_admin_kb():
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     u_id = message.from_user.id
-    is_new = False
     if str(u_id) not in db["members"]:
         db["members"].append(str(u_id))
         save_db(db)
-        is_new = True
         
-        # [تعديل 1] إصلاح رسالة التنبيه وتنسيقها وجعل الأيدي قابل للنسخ
+        # التعديل: رسالة تنبيه المطور عند دخول عضو جديد مع أيدي قابل للنسخ
         if db["settings"]["tanbih"] == "on":
             username = f"@{message.from_user.username}" if message.from_user.username else "لا يوجد"
             alert_text = (
@@ -125,10 +123,10 @@ async def start_cmd(message: types.Message):
 
     await message.answer(db["settings"]["start_msg"])
 
-# [تعديل 2] إصلاح ظهور لوحة المطور (تغيير شرط التحقق لضمان الدقة)
+# التعديل: ضمان ظهور لوحة المطور للمسؤولين والمطور الأساسي
 @dp.message(F.text == "م")
 async def admin_panel(message: types.Message):
-    if message.from_user.id in db["admins"]:
+    if message.from_user.id in db["admins"] or message.from_user.id == SUDO_ID:
         await message.answer("👮 **لوحة تحكم المطور الشاملة:**", reply_markup=get_main_admin_kb())
 
 # --- نظام التواصل الجوهري (The Core) ---
@@ -137,18 +135,17 @@ async def main_communication(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
     
-    if user_id in db["admins"] and current_state is not None:
+    if (user_id in db["admins"] or user_id == SUDO_ID) and current_state is not None:
         return
     if user_id in db["bans"]: return
 
-    # [تعديل 3] إصلاح رد الإدارة ليرسل إلى المستخدم الفعلي
-    if user_id in db["admins"] and message.reply_to_message:
+    # التعديل: إصلاح منطق الرد لضمان وصول الرسالة للمستخدم
+    if (user_id in db["admins"] or user_id == SUDO_ID) and message.reply_to_message:
         mapped = db["msg_map"].get(str(message.reply_to_message.message_id))
         if mapped:
             target_user_id = mapped["user_id"]
             try:
                 await bot.send_chat_action(target_user_id, "typing")
-                # إرسال النسخة للمستخدم
                 await message.copy_to(chat_id=target_user_id)
                 db["stats"]["total_sent"] += 1
                 save_db(db)
@@ -159,9 +156,10 @@ async def main_communication(message: types.Message, state: FSMContext):
                 return await message.reply(f"❌ فشل الإرسال: {str(e)}")
         return
 
-    if db["settings"]["estgbal"] == "off":
+    if db["settings"]["estgbal"] == "off" and not (user_id in db["admins"] or user_id == SUDO_ID):
         return await message.answer("⚠️ الاستقبال معطل حالياً.")
 
+    # حماية من نوع الوسائط
     p = db["protection"]
     if (p["photo"] == "on" and message.photo) or \
        (p["video"] == "on" and message.video) or \
@@ -169,12 +167,15 @@ async def main_communication(message: types.Message, state: FSMContext):
        (p["link"] == "on" and "t.me" in (message.text or "")):
         return await message.answer("🚫 عذراً، هذا النوع من الرسائل محظور حالياً.")
 
+    # منع البوت من إعادة توجيه رسائل المطور لنفسه كتذكرة
+    if user_id in db["admins"] or user_id == SUDO_ID:
+        return
+
     db["ticket_count"] += 1
     t_id = db["ticket_count"]
     ban_kb = InlineKeyboardBuilder()
     ban_kb.add(InlineKeyboardButton(text="🚫 حظر", callback_data=f"ban_{user_id}"))
     
-    # رسالة الإشعار للمطور (الأيدي قابل للنسخ)
     header = f"📩 **تذكرة جديدة #{t_id}**\n👤: {message.from_user.full_name}\n🆔: `{user_id}`"
     await bot.send_message(SUDO_ID, header, parse_mode="Markdown")
     
@@ -183,6 +184,7 @@ async def main_communication(message: types.Message, state: FSMContext):
         db["msg_map"][str(fwd.message_id)] = {"user_id": user_id, "ticket": t_id}
         db["stats"]["total_received"] += 1
         save_db(db)
+        
         await bot.send_message(SUDO_ID, "👆 استخدم الرد السريع للإجابة:", reply_markup=ban_kb.as_markup())
         await message.answer(db["settings"]["reply_msg"] + f"\n🎫 رقم التذكرة: `#{t_id}`")
     except Exception as e:
